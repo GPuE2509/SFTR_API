@@ -12,6 +12,7 @@ const systemConfigSchema = new Schema({
   water_level_l2: { type: Number, default: 40 },
   water_level_l3: { type: Number, default: 50 },
   water_level_l4: { type: Number, default: 60 },
+  water_rising_speed_threshold: { type: Number, default: 5 },
 }, { timestamps: true });
 
 module.exports = mongoose.model('SystemConfig', systemConfigSchema);

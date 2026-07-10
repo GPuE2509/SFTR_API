@@ -13,7 +13,7 @@ const workshopStaffSchema = new Schema({
   status: { 
     type: String, 
     enum: {
-      values: ['Pending_Invite', 'Available', 'Busy', 'Inactive', 'Suspended'],
+      values: ['Pending_Invite', 'Available', 'Busy', 'Inactive', 'Suspended', 'Rejected'],
       message: 'Invalid workshop staff status'
     },
     default: 'Pending_Invite' 
@@ -28,7 +28,8 @@ const workshopStaffSchema = new Schema({
     min: [-90, 'Latitude must be between -90 and 90'],
     max: [90, 'Latitude must be between -90 and 90']
   },
-  joined_at: { type: Date, default: Date.now }
+  invited_at: { type: Date, default: Date.now },
+  joined_at: { type: Date }
 }, { timestamps: false });
 
 module.exports = mongoose.model('WorkshopStaff', workshopStaffSchema);

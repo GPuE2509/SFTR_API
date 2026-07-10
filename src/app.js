@@ -1,3 +1,4 @@
+//app
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
@@ -10,8 +11,14 @@ const mapRoutes = require("./routes/mapRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const weatherRoutes = require("./routes/weatherRoutes");
 const incidentReportRoutes = require("./routes/incidentReportRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
+const warningZoneRoutes = require("./routes/warningZoneRoutes");
+const forumRoutes = require("./routes/forumRoutes");
+const leaderboardRoutes = require("./routes/leaderboardRoutes");
+const rescueRoutes = require("./routes/rescueRoutes");
 
 const app = express();
+// ... (trimmed lines for brevity in replacement, let's keep lines 13-59 intact and target precisely)
 
 // Fix express-rate-limit IPv6 issue
 app.set('trust proxy', 1);
@@ -32,16 +39,19 @@ const corsOptions = {
       callback(null, true);
       return;
     }
-    const cleanOrigin = origin.replace(/\/$/, '');
     const allowedOrigins = [
       'http://localhost:3000',
       'http://127.0.0.1:3000',
+      'http://localhost:4000',
+      'http://127.0.0.1:4000',
       'http://10.0.2.2:5000',
       'http://127.0.0.1:5000',
-      'https://sftr-amber.vercel.app'
+      'http://192.168.1.37:3000',
+      'http://192.168.1.37:4000',
+      'http://192.168.1.37:5000'
     ];
-    const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin);
-    if (allowedOrigins.includes(cleanOrigin) || isLocalhost) {
+    const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    if (allowedOrigins.includes(origin) || isLocalhost) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -67,6 +77,11 @@ app.use("/api/map", mapRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/weather", weatherRoutes);
 app.use("/api/incident-reports", incidentReportRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/warning-zones", warningZoneRoutes);
+app.use("/api/forum", forumRoutes);
+app.use("/api/leaderboard", leaderboardRoutes);
+app.use("/api/rescue", rescueRoutes);
 
 // Legacy fallback for ESP32 telemetry
 const IotController = require('./controllers/iot/IotController');

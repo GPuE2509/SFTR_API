@@ -71,3 +71,33 @@ exports.updateVolunteerProfile = async (userId, { vehicle_type, vehicle_plate, c
   await volunteer.save();
   return volunteer;
 };
+
+exports.updateVolunteerLocation = async (userId, { lat, lng }) => {
+  const volunteer = await Volunteer.findOne({ user_id: userId }).sort({ registered_at: -1 });
+  if (!volunteer) {
+    const error = new Error('Volunteer profile not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  if (['Canceled', 'Suspended', 'Inactive'].includes(volunteer.status)) {
+    const error = new Error('Cannot update location for inactive/suspended/canceled volunteer.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (lat != null) volunteer.current_lat = parseFloat(lat);
+  if (lng != null) volunteer.current_lng = parseFloat(lng);
+
+  await volunteer.save();
+  return volunteer;
+};
+
+exports.getActiveVolunteers = async () => {
+  return await Volunteer.find({
+    status: { $in: ['Available', 'Busy'] },
+    current_lat: { $ne: null },
+    current_lng: { $ne: null }
+  }).populate('user_id', 'full_name phone');
+};
+

@@ -2,9 +2,11 @@ require("dotenv").config();
 
 const http = require("http");
 const WebSocket = require("ws");
+require("./jobs/cronJobs");
 const app = require("./app");
 const connectDB = require("./config/database");
 const Message = require("./models/Message");
+const wsHelper = require("./utils/wsHelper");
 
 connectDB();
 
@@ -15,10 +17,8 @@ const server = http.createServer(app);
 
 // Initialize WebSocket server on top of HTTP server
 const wss = new WebSocket.Server({ server });
+wsHelper.setWss(wss);
 app.set('wss', wss);
-
-// Map to store connected clients by userId
-const clients = new Map();
 
 wss.on('connection', (ws) => {
   console.log('New WebSocket client connected');
@@ -32,7 +32,7 @@ wss.on('connection', (ws) => {
         ws.userName = data.userName;
         ws.role = data.role;
         ws.avatarUrl = data.avatarUrl || '';
-        clients.set(data.userId, ws);
+        wsHelper.clients.set(data.userId, ws);
         console.log(`Registered WebSocket user: ${data.userName} (${data.userId})`);
       } else if (data.type === 'chat') {
         const { senderId, senderName, senderRole, targetId, text, time, members } = data;
@@ -75,7 +75,7 @@ wss.on('connection', (ws) => {
             }
           }
 
-          clients.forEach((client, clientUserId) => {
+          wsHelper.clients.forEach((client, clientUserId) => {
             const isMember = !groupMembers || groupMembers.includes(clientUserId);
             if (isMember && clientUserId !== senderId && client.readyState === WebSocket.OPEN) {
               client.send(JSON.stringify({
@@ -93,7 +93,7 @@ wss.on('connection', (ws) => {
         } else {
           // Handle Direct Message
           console.log(`Direct message from ${senderName} to ${targetId}: ${text}`);
-          const recipientSocket = clients.get(targetId);
+          const recipientSocket = wsHelper.clients.get(targetId);
           if (recipientSocket && recipientSocket.readyState === WebSocket.OPEN) {
             recipientSocket.send(JSON.stringify({
               type: 'chat',
@@ -114,7 +114,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (ws.userId) {
-      clients.delete(ws.userId);
+      wsHelper.clients.delete(ws.userId);
       console.log(`Removed WebSocket client registration: ${ws.userName} (${ws.userId})`);
     }
   });

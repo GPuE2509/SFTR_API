@@ -11,6 +11,9 @@ router.post('/', incidentReportController.createReport);
 // GET /api/incident-reports
 router.get('/', incidentReportController.getReports);
 
+// GET /api/incident-reports/:id
+router.get('/:id', incidentReportController.getReportById);
+
 // POST /api/incident-reports/:id/vote
 router.post('/:id/vote', incidentReportController.voteReport);
 

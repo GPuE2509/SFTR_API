@@ -1,6 +1,18 @@
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
+const pointSchema = new Schema({
+  type: {
+    type: String,
+    enum: ['Point'],
+    required: true
+  },
+  coordinates: {
+    type: [Number],
+    required: true
+  }
+}, { _id: false });
+
 const warningZoneSchema = new Schema({
   user_id: { type: Schema.Types.ObjectId, ref: 'User', required: [true, 'User ID is required'] },
   zone_name: { 
@@ -9,20 +21,15 @@ const warningZoneSchema = new Schema({
     trim: true
   },
   location: {
-    type: { 
-      type: String, 
-      enum: {
-        values: ['Point', 'Polygon'],
-        message: 'Zone type must be Point or Polygon'
-      },
-      required: [true, 'Zone type is required']
-    },
-    coordinates: { type: Schema.Types.Mixed, required: [true, 'Coordinates are required'] } 
+    type: pointSchema,
+    required: [true, 'Location is required']
   },
   radius_meters: { 
     type: Number,
     min: [0, 'Radius cannot be negative']
   },
+  address: { type: String },
+  level: { type: String, enum: ['high', 'medium', 'low'], default: 'medium' },
   is_active: { type: Boolean, default: true }
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 

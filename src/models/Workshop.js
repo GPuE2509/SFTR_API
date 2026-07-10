@@ -28,6 +28,7 @@ const workshopSchema = new Schema({
     max: [90, 'Latitude must be between -90 and 90']
   },
   services: [{
+    id: { type: String },
     service_name: {
       type: String,
       required: [true, 'Service name is required'],
@@ -37,9 +38,28 @@ const workshopSchema = new Schema({
       type: Number,
       required: [true, 'Service price is required'],
       min: [0, 'Price cannot be negative']
-    }
+    },
+    category: { type: String, default: 'Basic repair' },
+    unit: { type: String, default: 'turn' },
+    desc: { type: String, default: '' },
+    active: { type: Boolean, default: true }
   }],
   is_open: { type: Boolean, default: true },
+  open_time: { type: String, default: '08:00' },
+  close_time: { type: String, default: '17:00' },
+  weekly_calendar: {
+    type: [{
+      day_group: { type: String, required: true },
+      open_time: { type: String, default: '08:00' },
+      close_time: { type: String, default: '17:00' },
+      is_active: { type: Boolean, default: true }
+    }],
+    default: [
+      { day_group: "Monday – Friday", open_time: '08:00', close_time: '17:00', is_active: true },
+      { day_group: "Saturday", open_time: '08:00', close_time: '17:00', is_active: true },
+      { day_group: "Sunday", open_time: '08:00', close_time: '17:00', is_active: true }
+    ]
+  },
   is_mobile: { type: Boolean, default: false },
   coverage_radius: { type: Number, default: 5 },
   cover_photo: { type: String, default: '' },

@@ -11,9 +11,20 @@ const rescueSessionSchema = new Schema({
   emergency_type: { 
     type: String, 
     enum: {
-      values: ['Trapped_By_Flood', 'Medical', 'Vehicle_Broken'],
+      values: ['Trapped_By_Flood', 'Medical', 'Vehicle_Broken', 'Other'],
       message: 'Invalid warning type'
     }
+  },
+  custom_emergency_type: {
+    type: String,
+    maxlength: [100, 'Custom emergency type cannot exceed 100 characters']
+  },
+  photos: {
+    type: String
+  },
+  description: { 
+    type: String,
+    maxlength: [1000, 'Description cannot exceed 1000 characters']
   },
   initial_lng: { 
     type: Number,
@@ -30,11 +41,12 @@ const rescueSessionSchema = new Schema({
   status: { 
     type: String, 
     enum: {
-      values: ['Pending', 'Assigned', 'In_Progress', 'Completed', 'Cancelled'],
+      values: ['Pending', 'Assigned', 'In_Progress', 'Arrived', 'Completed', 'Cancelled'],
       message: 'Invalid rescue status'
     },
     default: 'Pending' 
   },
+  safe_photos: { type: String },
   safe_checked_in: { type: Boolean, default: false },
   completed_at: { type: Date }
 }, { timestamps: { createdAt: 'created_at', updatedAt: false } });

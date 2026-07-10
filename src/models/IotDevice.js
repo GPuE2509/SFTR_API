@@ -58,6 +58,10 @@ const iotDeviceSchema = new Schema({
     type: Number,
     default: 0
   },
+  current_rising_speed: {
+    type: Number,
+    default: 0
+  },
   water_percent: {
     type: Number,
     default: 0
@@ -121,6 +125,10 @@ iotDeviceSchema.pre('save', async function(next) {
       this.warning_water_status = 'slight';
     } else {
       this.warning_water_status = 'safe';
+    }
+
+    if (!this.is_disabled && this.status !== 'Maintenance') {
+      this.status = level > 5 ? 'Online' : 'Offline';
     }
 
     next();

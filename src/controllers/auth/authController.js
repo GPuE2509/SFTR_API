@@ -25,7 +25,7 @@ exports.login = async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
     
-    const { user, token, refreshToken } = await authService.loginUser(email, password, rememberMe);
+    const { user, token, refreshToken } = await authService.loginUser(email, password, rememberMe, req.ip);
 
     const cookieOptions = {
       httpOnly: true,

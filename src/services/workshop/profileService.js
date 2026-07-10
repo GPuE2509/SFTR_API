@@ -3,6 +3,51 @@ const WorkshopStaff = require('../../models/WorkshopStaff');
 const User = require('../../models/User');
 const { deleteImage, uploadImage } = require('../../utils/uploadCloudinary');
 
+function checkCurrentlyOpen(w) {
+  if (!w.is_open) return false;
+
+  const hasActiveCalendar = w.weekly_calendar && w.weekly_calendar.some(c => c.is_active);
+
+  // Get current Vietnam time (GMT+7)
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const vnTime = new Date(utc + (3600000 * 7));
+
+  const currentHours = vnTime.getHours();
+  const currentMinutes = vnTime.getMinutes();
+  const currentMinVal = currentHours * 60 + currentMinutes;
+
+  if (!hasActiveCalendar) {
+    const [oH, oM] = (w.open_time || '08:00').split(':').map(Number);
+    const [cH, cM] = (w.close_time || '17:00').split(':').map(Number);
+    const openMinVal = oH * 60 + oM;
+    const closeMinVal = cH * 60 + cM;
+    return currentMinVal >= openMinVal && currentMinVal <= closeMinVal;
+  }
+
+  const day = vnTime.getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
+  let dayGroup = "";
+  if (day === 0) {
+    dayGroup = "Sunday";
+  } else if (day === 6) {
+    dayGroup = "Saturday";
+  } else {
+    dayGroup = "Monday – Friday";
+  }
+
+  const calendarEntry = w.weekly_calendar.find(c => c.day_group === dayGroup);
+  if (!calendarEntry) return true;
+  if (!calendarEntry.is_active) return false;
+
+  const [oH, oM] = (calendarEntry.open_time || '08:00').split(':').map(Number);
+  const [cH, cM] = (calendarEntry.close_time || '17:00').split(':').map(Number);
+
+  const openMinVal = oH * 60 + oM;
+  const closeMinVal = cH * 60 + cM;
+
+  return currentMinVal >= openMinVal && currentMinVal <= closeMinVal;
+}
+
 exports.getWorkshop = async (userOrId) => {
   let user;
   let userId;
@@ -13,7 +58,7 @@ exports.getWorkshop = async (userOrId) => {
     userId = userOrId;
   }
 
-  const staffLinks = await WorkshopStaff.find({ user_id: userId, is_owner: true });
+  const staffLinks = await WorkshopStaff.find({ user_id: userId, status: 'Available' });
   
   let workshop = null;
   if (staffLinks.length > 0) {
@@ -129,6 +174,52 @@ exports.updateWorkshop = async (userId, updateData) => {
     activeWorkshop.is_open = !!updateData.is_open;
   }
 
+  if (updateData.open_time !== undefined || updateData.close_time !== undefined) {
+    const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
+    const newOpenTime = updateData.open_time !== undefined ? updateData.open_time.trim() : activeWorkshop.open_time;
+    const newCloseTime = updateData.close_time !== undefined ? updateData.close_time.trim() : activeWorkshop.close_time;
+
+    if (updateData.open_time !== undefined) {
+      if (!newOpenTime) {
+        const error = new Error('Open time is required.');
+        error.status = 400;
+        throw error;
+      }
+      if (!timeRegex.test(newOpenTime)) {
+        const error = new Error('Invalid open time format (must be HH:MM).');
+        error.status = 400;
+        throw error;
+      }
+    }
+
+    if (updateData.close_time !== undefined) {
+      if (!newCloseTime) {
+        const error = new Error('Close time is required.');
+        error.status = 400;
+        throw error;
+      }
+      if (!timeRegex.test(newCloseTime)) {
+        const error = new Error('Invalid close time format (must be HH:MM).');
+        error.status = 400;
+        throw error;
+      }
+    }
+
+    const [openH, openM] = newOpenTime.split(':').map(Number);
+    const [closeH, closeM] = newCloseTime.split(':').map(Number);
+    const openMin = openH * 60 + openM;
+    const closeMin = closeH * 60 + closeM;
+
+    if (openMin >= closeMin) {
+      const error = new Error('Open time must be earlier than close time.');
+      error.status = 400;
+      throw error;
+    }
+
+    if (updateData.open_time !== undefined) activeWorkshop.open_time = newOpenTime;
+    if (updateData.close_time !== undefined) activeWorkshop.close_time = newCloseTime;
+  }
+
   if (updateData.is_mobile !== undefined) {
     activeWorkshop.is_mobile = !!updateData.is_mobile;
   }
@@ -147,6 +238,47 @@ exports.updateWorkshop = async (userId, updateData) => {
     activeWorkshop.cover_photo = updateData.cover_photo;
   }
 
+  if (updateData.weekly_calendar !== undefined) {
+    if (!Array.isArray(updateData.weekly_calendar)) {
+      const error = new Error('Weekly calendar must be an array.');
+      error.status = 400;
+      throw error;
+    }
+    const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
+    for (const item of updateData.weekly_calendar) {
+      if (!item.day_group) {
+        const error = new Error('Day group name is required in calendar.');
+        error.status = 400;
+        throw error;
+      }
+      const openT = item.open_time || '08:00';
+      const closeT = item.close_time || '17:00';
+      if (!timeRegex.test(openT.trim())) {
+        const error = new Error(`Invalid open time format for ${item.day_group}.`);
+        error.status = 400;
+        throw error;
+      }
+      if (!timeRegex.test(closeT.trim())) {
+        const error = new Error(`Invalid close time format for ${item.day_group}.`);
+        error.status = 400;
+        throw error;
+      }
+      const [oH, oM] = openT.split(':').map(Number);
+      const [cH, cM] = closeT.split(':').map(Number);
+      if (oH * 60 + oM >= cH * 60 + cM) {
+        const error = new Error(`Open time must be earlier than close time for ${item.day_group}.`);
+        error.status = 400;
+        throw error;
+      }
+    }
+    activeWorkshop.weekly_calendar = updateData.weekly_calendar.map(item => ({
+      day_group: item.day_group.trim(),
+      open_time: (item.open_time || '08:00').trim(),
+      close_time: (item.close_time || '17:00').trim(),
+      is_active: item.is_active !== undefined ? !!item.is_active : true
+    }));
+  }
+
   await activeWorkshop.save();
 
   // Also update staff link's workshop_name to match the new name
@@ -157,6 +289,164 @@ exports.updateWorkshop = async (userId, updateData) => {
     );
   }
 
+  return activeWorkshop;
+};
+
+exports.addService = async (userId, serviceData) => {
+  const staffLinks = await WorkshopStaff.find({ user_id: userId, is_owner: true });
+  
+  let activeWorkshop = null;
+  for (const staffLink of staffLinks) {
+    const workshop = await Workshop.findById(staffLink.workshop_id);
+    if (workshop && workshop.status !== 'cancelled') {
+      activeWorkshop = workshop;
+      break;
+    }
+  }
+
+  if (!activeWorkshop) {
+    const error = new Error('You do not have a valid, active workshop to update.');
+    error.status = 404;
+    throw error;
+  }
+
+  const cleanName = serviceData.name ? serviceData.name.replace(/\s+/g, ' ').trim() : '';
+  if (!cleanName) {
+    const error = new Error('Service name is required.');
+    error.status = 400;
+    throw error;
+  }
+  if (cleanName.length > 100) {
+    const error = new Error('Service name cannot exceed 100 characters.');
+    error.status = 400;
+    throw error;
+  }
+
+  const rawPriceStr = serviceData.price !== undefined ? serviceData.price.toString().replace(/\D/g, '') : '';
+  if (!rawPriceStr || isNaN(parseFloat(rawPriceStr)) || parseFloat(rawPriceStr) < 1000) {
+    const error = new Error('Valid service price is required and must be at least 1,000 VND.');
+    error.status = 400;
+    throw error;
+  }
+  if (rawPriceStr.length > 15) {
+    const error = new Error('Service price cannot exceed 15 digits.');
+    error.status = 400;
+    throw error;
+  }
+
+  const cleanDesc = serviceData.desc ? serviceData.desc.replace(/\s+/g, ' ').trim() : '';
+  if (cleanDesc.length > 300) {
+    const error = new Error('Service description cannot exceed 300 characters.');
+    error.status = 400;
+    throw error;
+  }
+
+  const newService = {
+    id: serviceData.id || `s${Date.now()}`,
+    service_name: cleanName,
+    base_price: parseFloat(rawPriceStr),
+    category: serviceData.category || 'Basic repair',
+    unit: serviceData.unit || 'turn',
+    desc: cleanDesc,
+    active: serviceData.active !== undefined ? serviceData.active : true
+  };
+
+  // Ensure services array exists
+  if (!activeWorkshop.services) {
+    activeWorkshop.services = [];
+  }
+  
+  activeWorkshop.services.push(newService);
+  await activeWorkshop.save();
+
+  return activeWorkshop;
+};
+
+exports.updateService = async (userId, serviceId, updateData) => {
+  const staffLinks = await WorkshopStaff.find({ user_id: userId, is_owner: true });
+  
+  let activeWorkshop = null;
+  for (const staffLink of staffLinks) {
+    const workshop = await Workshop.findById(staffLink.workshop_id);
+    if (workshop && workshop.status !== 'cancelled') {
+      activeWorkshop = workshop;
+      break;
+    }
+  }
+
+  if (!activeWorkshop) {
+    const error = new Error('You do not have a valid, active workshop to update.');
+    error.status = 404;
+    throw error;
+  }
+
+  const service = activeWorkshop.services.find(s => (s.id && s.id === serviceId) || (s._id && s._id.toString() === serviceId));
+  if (!service) {
+    const error = new Error('Service not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  if (updateData.name !== undefined) {
+    const cleanName = updateData.name.replace(/\s+/g, ' ').trim();
+    if (!cleanName) {
+      const error = new Error('Service name is required.');
+      error.status = 400;
+      throw error;
+    }
+    service.service_name = cleanName;
+  }
+
+  if (updateData.price !== undefined) {
+    const rawPriceStr = updateData.price.toString().replace(/\D/g, '');
+    if (!rawPriceStr || isNaN(parseFloat(rawPriceStr)) || parseFloat(rawPriceStr) < 1000) {
+      const error = new Error('Valid service price is required and must be at least 1,000 VND.');
+      error.status = 400;
+      throw error;
+    }
+    service.base_price = parseFloat(rawPriceStr);
+  }
+
+  if (updateData.desc !== undefined) {
+    service.desc = updateData.desc.replace(/\s+/g, ' ').trim();
+  }
+
+  if (updateData.category !== undefined) service.category = updateData.category;
+  if (updateData.unit !== undefined) service.unit = updateData.unit;
+  if (updateData.active !== undefined) service.active = updateData.active;
+
+  await activeWorkshop.save();
+  return activeWorkshop;
+};
+
+exports.deleteService = async (userId, serviceId) => {
+  const staffLinks = await WorkshopStaff.find({ user_id: userId, is_owner: true });
+  
+  let activeWorkshop = null;
+  for (const staffLink of staffLinks) {
+    const workshop = await Workshop.findById(staffLink.workshop_id);
+    if (workshop && workshop.status !== 'cancelled') {
+      activeWorkshop = workshop;
+      break;
+    }
+  }
+
+  if (!activeWorkshop) {
+    const error = new Error('You do not have a valid, active workshop.');
+    error.status = 404;
+    throw error;
+  }
+
+  // Handle finding the service correctly using our logic (supporting both id and _id)
+  const service = activeWorkshop.services.find(s => (s.id && s.id === serviceId) || (s._id && s._id.toString() === serviceId));
+  if (!service) {
+    const error = new Error('Service not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  activeWorkshop.services.pull({ _id: service._id });
+  await activeWorkshop.save();
   return activeWorkshop;
 };
 
@@ -222,7 +512,7 @@ exports.getWorkshopById = async (id) => {
   return {
     ...workshop,
     id: workshop._id,
-    status: workshop.is_open ? 'open' : 'closed',
+    status: checkCurrentlyOpen(workshop) ? 'open' : 'closed',
     rating: workshop.rating_average || 0,
     reviewCount: workshop.rating_count || 0,
     owner_id,

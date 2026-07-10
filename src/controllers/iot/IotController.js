@@ -4,7 +4,8 @@ const { handleImageUpload } = require('../../utils/uploadHelper');
 class IotController {
   async getAllDevices(req, res) {
     try {
-      const devices = await IotService.getAllDevices();
+      const { search } = req.query;
+      const devices = await IotService.getAllDevices(search);
       res.status(200).json({
         success: true,
         data: devices
@@ -194,6 +195,74 @@ class IotController {
       });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  async getDeviceHistory(req, res) {
+    try {
+      const { id } = req.params;
+      const historyData = await IotService.getDeviceHistory(id);
+      res.status(200).json({
+        success: true,
+        data: historyData
+      });
+    } catch (error) {
+      res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  async getDeviceSpeedAnalysis(req, res) {
+    try {
+      const { id } = req.params;
+      const speedData = await IotService.getDeviceSpeedAnalysis(id);
+      res.status(200).json({
+        success: true,
+        data: speedData
+      });
+    } catch (error) {
+      res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  async getDeviceLogs(req, res) {
+    try {
+      const { id } = req.params;
+      const device = await IotService.getDeviceById(id);
+      const Notification = require('../../models/Notification');
+      const logs = await Notification.find({ reference_id: device._id })
+        .sort({ created_at: -1 })
+        .limit(50)
+        .lean();
+      
+      const formattedLogs = logs.map(log => {
+        let status = 'info';
+        if (log.type === 'System_Alert' || log.type === 'Flood_In_Warning_Zone') {
+          if (log.title.includes('Critical') || log.title.includes('Depleted') || log.title.includes('vượt ngưỡng')) status = 'error';
+          else if (log.title.includes('Severe') || log.title.includes('Low Battery') || log.title.includes('cảnh báo')) status = 'warning';
+        }
+        return {
+          time: new Date(log.created_at).toLocaleString('vi-VN'),
+          event: log.title,
+          detail: log.body,
+          status
+        };
+      });
+
+      res.status(200).json({
+        success: true,
+        data: formattedLogs
+      });
+    } catch (error) {
+      res.status(404).json({
+        success: false,
+        message: error.message
+      });
     }
   }
 }

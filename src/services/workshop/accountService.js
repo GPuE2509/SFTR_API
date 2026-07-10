@@ -66,6 +66,39 @@ exports.registerWorkshop = async (userId, { name, phone, address, lat, lng }) =>
 
   await newStaff.save();
 
+  // Notify Admin and Manager roles
+  try {
+    const user = await User.findById(userId);
+    const userName = user ? user.full_name : 'A user';
+    const Notification = require('../../models/Notification');
+
+    await Notification.create({
+      recipient_role: 'Admin',
+      title: 'New Workshop Registration Request',
+      body: `${userName} has submitted a registration request for "${newWorkshop.name}" workshop.`,
+      type: 'System_Alert',
+      reference_id: newWorkshop._id,
+      metadata: {
+        sender_name: userName,
+        web_url: '/admin/accounts'
+      }
+    });
+
+    await Notification.create({
+      recipient_role: 'Manager',
+      title: 'New Workshop Registration Request',
+      body: `${userName} has submitted a registration request for "${newWorkshop.name}" workshop.`,
+      type: 'System_Alert',
+      reference_id: newWorkshop._id,
+      metadata: {
+        sender_name: userName,
+        web_url: '/admin/accounts'
+      }
+    });
+  } catch (err) {
+    console.error('Failed to create workshop registration notifications:', err);
+  }
+
   return newWorkshop;
 };
 

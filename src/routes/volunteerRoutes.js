@@ -8,6 +8,9 @@ const { uploadSingleImage } = require('../utils/multerConfig');
 // Register a new volunteer profile
 router.post('/register', authenticateUser, uploadSingleImage, volunteerAccountController.registerVolunteerProfile);
 
+// Get all active volunteers (status Available/Busy)
+router.get('/active', authenticateUser, volunteerProfileController.getActiveVolunteers);
+
 // Get volunteer profile of current user
 router.get('/me', authenticateUser, volunteerProfileController.getVolunteerProfile);
 
@@ -19,5 +22,8 @@ router.put('/me/cancel', authenticateUser, volunteerAccountController.cancelVolu
 
 // Update volunteer profile
 router.put('/me', authenticateUser, uploadSingleImage, volunteerProfileController.updateVolunteerProfile);
+
+// Update volunteer location
+router.put('/me/location', authenticateUser, volunteerProfileController.updateVolunteerLocation);
 
 module.exports = router;

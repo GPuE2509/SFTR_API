@@ -85,7 +85,7 @@ exports.registerUser = async (email, password, full_name, phone) => {
 
 
 
-exports.loginUser = async (email, password, rememberMe) => {
+exports.loginUser = async (email, password, rememberMe, ipAddress) => {
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
   const user = await User.findOne({ email: normalizedEmail });
@@ -129,6 +129,45 @@ exports.loginUser = async (email, password, rememberMe) => {
     user: user._id,
     expiresAt: new Date(decodedRefresh.exp * 1000)
   }).save();
+
+  // Security check for unusual login activity
+  if (ipAddress) {
+    if (user.last_login_ip && user.last_login_ip !== ipAddress) {
+      try {
+        const Notification = require('../../models/Notification');
+        const title = `Unusual Login Security Alert: ${user.email}`;
+        const body = `Your account logged in from a new IP address: ${ipAddress}. If this wasn't you, please secure your account immediately.`;
+
+        // 1. Notify user
+        await Notification.create({
+          recipient_id: user._id,
+          title,
+          body,
+          type: 'System_Alert',
+          metadata: {
+            sender_name: 'Security System',
+            web_url: '/profile'
+          }
+        });
+
+        // 2. Notify admin role
+        await Notification.create({
+          recipient_role: 'Admin',
+          title,
+          body: `Account ${user.email} logged in from a new IP address (${ipAddress}).`,
+          type: 'System_Alert',
+          metadata: {
+            sender_name: 'Security System',
+            web_url: '/admin/accounts'
+          }
+        });
+      } catch (err) {
+        console.error('Failed to trigger unusual login alerts:', err);
+      }
+    }
+    user.last_login_ip = ipAddress;
+    await user.save();
+  }
 
   return {
     user,

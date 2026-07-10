@@ -5,6 +5,9 @@ exports.registerWorkshopProfile = async (req, res) => {
   try {
     const workshop = await workshopService.registerWorkshop(req.user._id, req.body);
     
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
     return res.status(201).json({
       message: 'Workshop registration successful. Pending approval.',
       workshop
@@ -25,6 +28,9 @@ exports.registerWorkshopProfile = async (req, res) => {
 exports.cancelWorkshopRegistration = async (req, res) => {
   try {
     await workshopService.cancelWorkshopRegistration(req.user._id);
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
     return res.status(200).json({ message: 'Workshop registration request cancelled successfully.' });
   } catch (error) {
     if (error.status) {
@@ -38,6 +44,9 @@ exports.cancelWorkshopRegistration = async (req, res) => {
 exports.toggleWorkshopStatus = async (req, res) => {
   try {
     const workshop = await workshopService.toggleWorkshopStatus(req.user._id, req.body);
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
     return res.status(200).json({
       message: req.body.action === 'pause' ? 'Workshop activity paused successfully.' : 'Workshop activity resumed successfully.',
       workshop

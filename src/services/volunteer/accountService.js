@@ -80,6 +80,40 @@ exports.registerVolunteer = async (userId, { vehicle_type, vehicle_plate, curren
   });
 
   await newVolunteer.save();
+
+  // Notify Admin and Manager roles
+  try {
+    const user = await User.findById(userId);
+    const userName = user ? user.full_name : 'A user';
+    const Notification = require('../../models/Notification');
+    
+    await Notification.create({
+      recipient_role: 'Admin',
+      title: 'New Volunteer Registration Request',
+      body: `${userName} has submitted a registration request to become a Volunteer.`,
+      type: 'System_Alert',
+      reference_id: newVolunteer._id,
+      metadata: {
+        sender_name: userName,
+        web_url: '/admin/accounts'
+      }
+    });
+
+    await Notification.create({
+      recipient_role: 'Manager',
+      title: 'New Volunteer Registration Request',
+      body: `${userName} has submitted a registration request to become a Volunteer.`,
+      type: 'System_Alert',
+      reference_id: newVolunteer._id,
+      metadata: {
+        sender_name: userName,
+        web_url: '/admin/accounts'
+      }
+    });
+  } catch (err) {
+    console.error('Failed to create volunteer registration notifications:', err);
+  }
+
   return newVolunteer;
 };
 

@@ -48,7 +48,27 @@ const authorizeRoles = (...roles) => {
     };
 };
 
+const authenticateUserOptional = async (req, res, next) => {
+    let token = req.header('Authorization')?.split(' ')[1];
+    if (!token || token === 'undefined' || token === 'null') {
+        token = req.cookies?.token;
+    }
+
+    if (!token) {
+        return next();
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = await User.findById(decoded.userId).select('-password_hash');
+        next();
+    } catch (err) {
+        next();
+    }
+};
+
 module.exports = {
     authenticateUser,
+    authenticateUserOptional,
     authorizeRoles
 };

@@ -1,6 +1,6 @@
 /**
  * Map Service
- * Handles map utilities, proxying Nominatim OpenStreetMap queries.
+ * Handles Goong Maps API queries for geocoding, search, and routing.
  */
 
 const Workshop = require('../../models/Workshop');
@@ -9,67 +9,287 @@ const User = require('../../models/User');
 const IotDevice = require('../../models/IotDevice');
 const IncidentReport = require('../../models/IncidentReport');
 
+// Polyline decoding helper for Goong Overview Polyline (Google Polyline format)
+function decodePolyline(str) {
+  let index = 0,
+      lat = 0,
+      lng = 0,
+      coordinates = [],
+      shift = 0,
+      result = 0,
+      byte = null,
+      latitude_change,
+      longitude_change;
+
+  while (index < str.length) {
+    byte = null;
+    shift = 0;
+    result = 0;
+
+    do {
+      byte = str.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+
+    latitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lat += latitude_change;
+
+    shift = 0;
+    result = 0;
+
+    do {
+      byte = str.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+
+    longitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lng += longitude_change;
+
+    // Goong returns coordinates in [lng, lat] for GeoJSON
+    coordinates.push([lng / 100000, lat / 100000]);
+  }
+
+  return coordinates;
+}
+
+// Maps Goong address_components list into Nominatim-like address structure
+function mapGoongAddressToNominatim(components, formattedAddress) {
+  const address = {
+    road: '',
+    house_number: '',
+    ward: '',
+    district: '',
+    city: ''
+  };
+
+  if (!components || components.length === 0) {
+    const parts = formattedAddress ? formattedAddress.split(',').map(p => p.trim()) : [];
+    if (parts.length >= 1) address.city = parts[parts.length - 1];
+    if (parts.length >= 2) address.district = parts[parts.length - 2];
+    if (parts.length >= 3) address.ward = parts[parts.length - 3];
+    if (parts.length >= 4) address.road = parts.slice(0, parts.length - 3).join(', ');
+    return address;
+  }
+
+  const len = components.length;
+  if (len >= 1) {
+    address.city = components[len - 1].long_name;
+  }
+  if (len >= 2) {
+    address.district = components[len - 2].long_name;
+  }
+  if (len >= 3) {
+    address.ward = components[len - 3].long_name;
+  }
+  
+  const streetParts = [];
+  for (let i = 0; i < len - 3; i++) {
+    const comp = components[i];
+    if (/\d/.test(comp.long_name) && !address.house_number) {
+      address.house_number = comp.long_name;
+    } else {
+      streetParts.push(comp.long_name);
+    }
+  }
+  address.road = streetParts.join(', ');
+
+  return address;
+}
+
 exports.searchNominatim = async (query, lat, lng) => {
   if (!query || !query.trim()) {
     return [];
   }
 
-  // Restrict searches strictly to Vietnam (countrycodes=vn)
-  let url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query.trim())}&format=json&limit=5&addressdetails=1&countrycodes=vn`;
-
-  // Default search bias center to Can Tho coordinates
-  let biasLat = 10.03711;
-  let biasLng = 105.78825;
-
-  if (lat && lng) {
-    const latFloat = parseFloat(lat);
-    const lngFloat = parseFloat(lng);
-    if (!isNaN(latFloat) && !isNaN(lngFloat)) {
-      biasLat = latFloat;
-      biasLng = lngFloat;
-    }
-  }
-
-  const minLon = biasLng - 1.0;
-  const minLat = biasLat - 1.0;
-  const maxLon = biasLng + 1.0;
-  const maxLat = biasLat + 1.0;
-  url += `&viewbox=${minLon},${minLat},${maxLon},${maxLat}&bounded=1`;
+  const apiKey = process.env.GOONG_API_KEY;
 
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        // Nominatim policy requires a valid User-Agent to identify the application
-        'User-Agent': 'SmartFloodTrafficRescue/1.0 (contact@sftr.org)'
+    // 1. Try Goong Place Autocomplete API to fetch multiple suggestions
+    let autocompleteUrl = `https://rsapi.goong.io/Place/Autocomplete?input=${encodeURIComponent(query.trim())}&api_key=${apiKey}`;
+    if (lat && lng) {
+      autocompleteUrl += `&location=${lat},${lng}&radius=50000`;
+    }
+
+    const autocompleteResponse = await fetch(autocompleteUrl, { method: 'GET' });
+    if (autocompleteResponse.ok) {
+      const autocompleteData = await autocompleteResponse.json();
+      
+      if (autocompleteData.predictions && autocompleteData.predictions.length > 0) {
+        // Fetch up to 10 suggestions to resolve details (coordinates)
+        const topPredictions = autocompleteData.predictions.slice(0, 10);
+        
+        const detailedResults = await Promise.all(
+          topPredictions.map(async (pred) => {
+            try {
+              const detailUrl = `https://rsapi.goong.io/v2/place/detail?place_id=${pred.place_id}&api_key=${apiKey}`;
+              const detailRes = await fetch(detailUrl, { method: 'GET' });
+              if (!detailRes.ok) return null;
+              
+              const detailData = await detailRes.json();
+              if (detailData.result) {
+                const item = detailData.result;
+                return {
+                  place_id: item.place_id,
+                  display_name: item.formatted_address,
+                  lat: item.geometry && item.geometry.location ? String(item.geometry.location.lat) : '0',
+                  lon: item.geometry && item.geometry.location ? String(item.geometry.location.lng) : '0',
+                  address: mapGoongAddressToNominatim(item.address_components, item.formatted_address),
+                  boundingbox: []
+                };
+              }
+            } catch (err) {
+              console.warn(`Error fetching place detail for ${pred.place_id}:`, err);
+            }
+            return null;
+          })
+        );
+
+        const filteredResults = detailedResults.filter(Boolean);
+        if (filteredResults.length > 0) {
+          if (lat && lng) {
+            const latNum = parseFloat(lat);
+            const lngNum = parseFloat(lng);
+            filteredResults.sort((a, b) => {
+              const distA = getDistance(latNum, lngNum, parseFloat(a.lat), parseFloat(a.lon));
+              const distB = getDistance(latNum, lngNum, parseFloat(b.lat), parseFloat(b.lon));
+              return distA - distB;
+            });
+          }
+          return filteredResults;
+        }
       }
-    });
+    }
+  } catch (error) {
+    console.warn('Autocomplete search failed, falling back to Geocode:', error);
+  }
+
+  // 2. Fallback to existing Geocode API if Autocomplete returns no predictions or fails
+  let geocodeUrl = `https://rsapi.goong.io/Geocode?address=${encodeURIComponent(query.trim())}&api_key=${apiKey}`;
+
+  try {
+    const response = await fetch(geocodeUrl, { method: 'GET' });
 
     if (!response.ok) {
-      throw new Error(`Nominatim API returned status: ${response.status}`);
+      throw new Error(`Goong Geocode API returned status: ${response.status}`);
     }
 
     const data = await response.json();
+    if (!data.results) {
+      return [];
+    }
 
-    // Map and format results to expose clean fields
-    return data.map(item => ({
+    const mapped = data.results.map(item => ({
       place_id: item.place_id,
-      display_name: item.display_name,
-      lat: parseFloat(item.lat),
-      lon: parseFloat(item.lon),
-      boundingbox: item.boundingbox ? item.boundingbox.map(b => parseFloat(b)) : []
+      display_name: item.formatted_address,
+      lat: item.geometry && item.geometry.location ? String(item.geometry.location.lat) : '0',
+      lon: item.geometry && item.geometry.location ? String(item.geometry.location.lng) : '0',
+      address: mapGoongAddressToNominatim(item.address_components, item.formatted_address),
+      boundingbox: []
     }));
+
+    if (lat && lng) {
+      const latNum = parseFloat(lat);
+      const lngNum = parseFloat(lng);
+      mapped.sort((a, b) => {
+        const distA = getDistance(latNum, lngNum, parseFloat(a.lat), parseFloat(a.lon));
+        const distB = getDistance(latNum, lngNum, parseFloat(b.lat), parseFloat(b.lon));
+        return distA - distB;
+      });
+    }
+
+    return mapped;
   } catch (error) {
-    console.error('Error fetching from Nominatim OpenStreetMap:', error);
+    console.error('Error fetching from Goong Geocode API:', error);
     throw new Error('Failed to retrieve location details from map search service.');
   }
 };
+
+exports.reverseGeocode = async (lat, lng) => {
+  if (!lat || !lng) {
+    throw new Error('Latitude and longitude parameters are required.');
+  }
+
+  const apiKey = process.env.GOONG_API_KEY;
+  const url = `https://rsapi.goong.io/Geocode?latlng=${lat},${lng}&api_key=${apiKey}`;
+
+  try {
+    const response = await fetch(url, { method: 'GET' });
+
+    if (!response.ok) {
+      throw new Error(`Goong Reverse Geocode API returned status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.results || data.results.length === 0) {
+      return { address: {} };
+    }
+
+    const item = data.results[0];
+    return {
+      place_id: item.place_id,
+      display_name: item.formatted_address,
+      lat: String(lat),
+      lon: String(lng),
+      address: mapGoongAddressToNominatim(item.address_components, item.formatted_address)
+    };
+  } catch (error) {
+    console.error('Error fetching from Goong Reverse Geocode API:', error);
+    throw new Error('Failed to retrieve reverse geocoding details.');
+  }
+};
+
+function checkCurrentlyOpen(w) {
+  if (!w.is_open) return false;
+
+  const hasActiveCalendar = w.weekly_calendar && w.weekly_calendar.some(c => c.is_active);
+
+  // Get current Vietnam time (GMT+7)
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const vnTime = new Date(utc + (3600000 * 7));
+
+  const currentHours = vnTime.getHours();
+  const currentMinutes = vnTime.getMinutes();
+  const currentMinVal = currentHours * 60 + currentMinutes;
+
+  if (!hasActiveCalendar) {
+    const [oH, oM] = (w.open_time || '08:00').split(':').map(Number);
+    const [cH, cM] = (w.close_time || '17:00').split(':').map(Number);
+    const openMinVal = oH * 60 + oM;
+    const closeMinVal = cH * 60 + cM;
+    return currentMinVal >= openMinVal && currentMinVal <= closeMinVal;
+  }
+
+  const day = vnTime.getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
+  let dayGroup = "";
+  if (day === 0) {
+    dayGroup = "Sunday";
+  } else if (day === 6) {
+    dayGroup = "Saturday";
+  } else {
+    dayGroup = "Monday – Friday";
+  }
+
+  const calendarEntry = w.weekly_calendar.find(c => c.day_group === dayGroup);
+  if (!calendarEntry) return true;
+  if (!calendarEntry.is_active) return false;
+
+  const [oH, oM] = (calendarEntry.open_time || '08:00').split(':').map(Number);
+  const [cH, cM] = (calendarEntry.close_time || '17:00').split(':').map(Number);
+
+  const openMinVal = oH * 60 + oM;
+  const closeMinVal = cH * 60 + cM;
+
+  return currentMinVal >= openMinVal && currentMinVal <= closeMinVal;
+}
 
 exports.getActiveWorkshops = async () => {
   try {
     const workshops = await Workshop.find(
       { status: 'Active' },
-      'name phone address lat lng is_mobile coverage_radius services rating_average rating_count is_open cover_photo'
+      'name phone address lat lng is_mobile coverage_radius services rating_average rating_count is_open cover_photo weekly_calendar open_time close_time'
     ).lean();
 
     // Populate owner names
@@ -95,6 +315,7 @@ exports.getActiveWorkshops = async () => {
 
     return workshops.map(w => ({
       ...w,
+      is_open: checkCurrentlyOpen(w),
       owner_name: ownerMap[w._id.toString()] || '',
       owner_id: ownerIdMap[w._id.toString()] || ''
     }));
@@ -122,31 +343,26 @@ function getDistance(lat1, lon1, lat2, lon2) {
 
 // Calculate alternative routes and assess flooding & hazards along them
 exports.calculateAlternativeRoutes = async (startLat, startLng, endLat, endLng) => {
-  // Query OSRM API for driving routes
-  const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&alternatives=true`;
+  const apiKey = process.env.GOONG_API_KEY;
+  const url = `https://rsapi.goong.io/Direction?origin=${startLat},${startLng}&destination=${endLat},${endLng}&vehicle=car&api_key=${apiKey}&alternatives=true`;
   
   let routes = [];
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'SmartFloodTrafficRescue/1.0 (contact@sftr.org)'
-      }
-    });
+    const response = await fetch(url, { method: 'GET' });
 
     if (!response.ok) {
-      throw new Error(`OSRM API returned status: ${response.status}`);
+      throw new Error(`Goong Direction API returned status: ${response.status}`);
     }
 
     const result = await response.json();
-    if (result.code === 'Ok' && result.routes) {
+    if (result.routes && result.routes.length > 0) {
       routes = result.routes;
     } else {
       throw new Error(result.message || 'No route found');
     }
   } catch (error) {
-    console.error('Error fetching routes from OSRM:', error);
-    throw new Error('Failed to fetch routes from OSRM routing service.');
+    console.error('Error fetching routes from Goong:', error);
+    throw new Error('Failed to fetch routes from Goong routing service.');
   }
 
   // Fetch active flooded IoT sensors
@@ -173,8 +389,12 @@ exports.calculateAlternativeRoutes = async (startLat, startLng, endLat, endLng) 
   const hazardPenaltySeconds = 600; // 10 minutes weight penalty per hazard point
 
   const evaluatedRoutes = routes.map((route, index) => {
-    const geometry = route.geometry; // GeoJSON LineString
-    const coordinates = geometry.coordinates; // Array of [lng, lat]
+    const polylinePoints = route.overview_polyline ? route.overview_polyline.points : '';
+    const coordinates = polylinePoints ? decodePolyline(polylinePoints) : [];
+    const geometry = {
+      type: 'LineString',
+      coordinates: coordinates
+    };
 
     const encounteredFloods = [];
     const encounteredHazards = [];
@@ -228,11 +448,14 @@ exports.calculateAlternativeRoutes = async (startLat, startLng, endLat, endLng) 
     });
 
     const isFlooded = encounteredFloods.length > 0;
-    const baseDuration = route.duration; // seconds (OSRM free-flow estimate)
-    const trafficAdjustmentFactor = 1.6; // Scale OSRM time to match realistic urban traffic speeds
-    const duration = Math.round(baseDuration * trafficAdjustmentFactor); // seconds (realistic estimate)
     
-    const distance = route.distance; // meters
+    const leg = route.legs && route.legs[0];
+    const baseDuration = leg && leg.duration ? leg.duration.value : 0;
+    const distance = leg && leg.distance ? leg.distance.value : 0;
+
+    const trafficAdjustmentFactor = 1.0; // Goong already contains real-time traffic speeds
+    const duration = Math.round(baseDuration * trafficAdjustmentFactor); // seconds
+    
     const hazardCount = encounteredHazards.length;
     const weightedDuration = duration + (hazardCount * hazardPenaltySeconds);
 
@@ -259,3 +482,186 @@ exports.calculateAlternativeRoutes = async (startLat, startLng, endLat, endLng) 
 
   return evaluatedRoutes;
 };
+
+exports.getFloodZoneHeatmap = async () => {
+  const WaterLevelLog = require('../../models/WaterLevelLog');
+  const devices = await IotDevice.find({ status: 'Online', is_disabled: { $ne: true } }).lean();
+
+  const zones = [];
+  
+  for (let i = 0; i < devices.length; i++) {
+    const dev = devices[i];
+    if (dev.lat && dev.lng) {
+      const level = dev.current_water_level || 0;
+      const calib = dev.calib_empty_cm || 100;
+      const pct = Math.min(100, Math.max(0, (level / calib) * 100));
+      
+      const logCount = await WaterLevelLog.countDocuments({ device_id: dev._id, water_level_mm: { $gte: 300 } });
+      const histCount = Math.max(5, logCount > 0 ? logCount : Math.floor(pct / 8) + 3);
+      
+      let intensity = Math.min(1.0, parseFloat(((pct / 100) * 0.6 + 0.35).toFixed(2)));
+      let severity = 'slight';
+      if (pct >= 60 || intensity >= 0.75) severity = 'critical';
+      else if (pct >= 50 || intensity >= 0.65) severity = 'severe';
+      else if (pct >= 40 || intensity >= 0.5) severity = 'moderate';
+
+      const localizedRadius = Math.min(260, 120 + Math.floor(level * 1.5));
+
+      zones.push({
+        id: `heatmap-dev-${dev._id}`,
+        name: `Cụm trạm ${dev.name || dev.device_code || 'IoT Zone'}`,
+        lat: dev.lat,
+        lng: dev.lng,
+        radius_m: localizedRadius,
+        intensity: intensity,
+        severity: severity,
+        historical_incidents: histCount,
+        realtime_level_cm: level,
+        description: `Mật độ ngập tích lũy thời gian thực và lịch sử tại cụm ${dev.location || 'trung tâm'}.`
+      });
+    }
+  }
+
+  return zones;
+};
+
+// ── Emergency Facilities via Goong Places API ─────────────────────────────────
+// Simple in-memory cache: key = "lat2dp_lng2dp_radius", value = { data, expiry }
+const _emergencyCache = {};
+
+function _haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const FACILITY_TYPE_MAP = {
+  hospital:       { label: 'General Hospital',             color: '#B91C1C', icon: 'hospital' },
+  clinic:         { label: 'Medical Clinic',               color: '#C2410C', icon: 'stethoscope' },
+  pharmacy:       { label: 'Medical Supply / Pharmacy',    color: '#047857', icon: 'cross' },
+  fire_station:   { label: 'Fire & Rescue Command',        color: '#991B1B', icon: 'flame' },
+  police:         { label: 'Police / Security Department', color: '#1D4ED8', icon: 'shield' },
+  shelter:        { label: 'Evacuation Shelter Center',    color: '#4338CA', icon: 'home' },
+  rescue_station: { label: 'Emergency Rescue Outpost',     color: '#0F766E', icon: 'life-buoy' },
+};
+
+// Map Goong place types to our facility types
+const GOONG_TYPE_MAP = {
+  'hospital':         'hospital',
+  'health':           'clinic',
+  'pharmacy':         'pharmacy',
+  'doctor':           'clinic',
+  'dentist':          'clinic',
+  'fire_station':     'fire_station',
+  'police':           'police',
+  'emergency':        'rescue_station',
+  'shelter':          'shelter',
+  'lodging':          'shelter',
+};
+
+// Search keywords for Goong Places API (Vietnamese)
+const GOONG_SEARCH_QUERIES = [
+  { query: 'bệnh viện',       type: 'hospital' },
+  { query: 'phòng khám',      type: 'clinic' },
+  { query: 'trạm y tế',       type: 'clinic' },
+  { query: 'nhà thuốc',       type: 'pharmacy' },
+  { query: 'cửa hàng thuốc',  type: 'pharmacy' },
+  { query: 'đồn cảnh sát',    type: 'police' },
+  { query: 'công an',         type: 'police' },
+  { query: 'phòng cháy chữa cháy', type: 'fire_station' },
+  { query: 'cứu hỏa',         type: 'fire_station' },
+  { query: 'khu lánh nạn',    type: 'shelter' },
+  { query: 'trạm cứu nạn',    type: 'rescue_station' },
+];
+
+exports.getEmergencyFacilities = async (lat, lng, radiusM = 3000) => {
+  const latNum = parseFloat(lat);
+  const lngNum = parseFloat(lng);
+  const radNum = Math.min(parseInt(radiusM) || 3000, 10000);
+
+  if (isNaN(latNum) || isNaN(lngNum)) {
+    throw new Error('Invalid lat/lng coordinates');
+  }
+
+  // Cache key: round to 3 decimal places (~100m grid) + radius
+  const cacheKey = `${latNum.toFixed(3)}_${lngNum.toFixed(3)}_${radNum}`;
+  const cached = _emergencyCache[cacheKey];
+  if (cached && cached.expiry > Date.now()) {
+    return { facilities: cached.data, cached: true };
+  }
+
+  const apiKey = process.env.GOONG_API_KEY;
+  const facilityMap = new Map(); // id -> facility to deduplicate
+
+  // Run all searches in parallel for speed
+  await Promise.allSettled(
+    GOONG_SEARCH_QUERIES.map(async ({ query, type }) => {
+      try {
+        const url = `https://rsapi.goong.io/Place/Autocomplete?input=${encodeURIComponent(query)}&location=${latNum},${lngNum}&radius=${radNum}&api_key=${apiKey}`;
+        const res = await fetch(url, { method: 'GET' });
+        if (!res.ok) return;
+        const json = await res.json();
+        const predictions = json.predictions || [];
+
+        // Fetch place details in parallel (limit 5 per query)
+        await Promise.allSettled(
+          predictions.slice(0, 5).map(async (pred) => {
+            try {
+              const detailUrl = `https://rsapi.goong.io/v2/place/detail?place_id=${pred.place_id}&api_key=${apiKey}`;
+              const detailRes = await fetch(detailUrl, { method: 'GET' });
+              if (!detailRes.ok) return;
+              const detailJson = await detailRes.json();
+              const item = detailJson.result;
+              if (!item || !item.geometry || !item.geometry.location) return;
+
+              const placeId = item.place_id || pred.place_id;
+              if (facilityMap.has(placeId)) return; // deduplicate
+
+              const placeLat = item.geometry.location.lat;
+              const placeLng = item.geometry.location.lng;
+              const distKm = _haversineKm(latNum, lngNum, placeLat, placeLng);
+              if (distKm > radNum / 1000.0) return; // outside radius
+
+              // Determine facility type from Goong types array or fallback to query type
+              const goongTypes = item.types || [];
+              let resolvedType = type;
+              for (const t of goongTypes) {
+                if (GOONG_TYPE_MAP[t]) { resolvedType = GOONG_TYPE_MAP[t]; break; }
+              }
+              const meta = FACILITY_TYPE_MAP[resolvedType] || FACILITY_TYPE_MAP.shelter;
+
+              const address = item.formatted_address || '';
+              const phone = item.international_phone_number || item.formatted_phone_number || '';
+
+              facilityMap.set(placeId, {
+                id: `goong_${placeId}`,
+                name: item.name || item.formatted_address || meta.label,
+                type: resolvedType,
+                label: meta.label,
+                color: meta.color,
+                icon: meta.icon,
+                lat: placeLat,
+                lng: placeLng,
+                address,
+                phone,
+                distKm: parseFloat(distKm.toFixed(2)),
+                distStr: distKm < 1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(1)} km`,
+                openingHours: '',
+              });
+            } catch (_) {}
+          })
+        );
+      } catch (_) {}
+    })
+  );
+
+  const facilities = Array.from(facilityMap.values())
+    .sort((a, b) => a.distKm - b.distKm);
+
+  _emergencyCache[cacheKey] = { data: facilities, expiry: Date.now() + 15 * 60 * 1000 };
+
+  return { facilities, cached: false };
+};
+

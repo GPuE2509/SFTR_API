@@ -16,7 +16,7 @@ exports.searchArea = async (req, res) => {
     }
 
     const results = await mapService.searchNominatim(q, lat, lng);
-    
+
     return res.status(200).json({
       success: true,
       data: results
@@ -86,6 +86,80 @@ exports.getRoute = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || 'Server error during path routing.'
+    });
+  }
+};
+
+// Get flood zone heatmap clusters
+exports.getFloodZoneHeatmap = async (req, res) => {
+  try {
+    const heatmapZones = await mapService.getFloodZoneHeatmap();
+    return res.status(200).json({
+      success: true,
+      data: heatmapZones
+    });
+  } catch (error) {
+    console.error('Error fetching flood zone heatmap:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch flood zone heatmap clusters'
+    });
+  }
+};
+
+// Reverse geocoding query proxy
+exports.reverseGeocode = async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+
+    if (!lat || !lng) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query parameters "lat" and "lng" are required.'
+      });
+    }
+
+    const result = await mapService.reverseGeocode(parseFloat(lat), parseFloat(lng));
+
+    return res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error in reverseGeocode controller:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Server error during reverse geocoding.'
+    });
+  }
+};
+
+/**
+ * GET /api/map/emergency-facilities?lat=...&lng=...&radius=3000
+ * Queries Goong Places API to find nearby emergency facilities
+ */
+exports.getEmergencyFacilities = async (req, res) => {
+  try {
+    const { lat, lng, radius } = req.query;
+
+    if (!lat || !lng) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query parameters "lat" and "lng" are required.'
+      });
+    }
+
+    const result = await mapService.getEmergencyFacilities(lat, lng, radius || 3000);
+
+    return res.status(200).json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error('Error in getEmergencyFacilities controller:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Server error fetching emergency facilities.'
     });
   }
 };

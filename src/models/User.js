@@ -104,7 +104,26 @@ const userSchema = new Schema({
     type: Number, 
     default: 0,
     min: [0, 'Contribution points cannot be negative']
-  }
+  },
+  monthly_points: { 
+    type: Number, 
+    default: 0,
+    min: [0, 'Monthly points cannot be negative']
+  },
+  weekly_points: { 
+    type: Number, 
+    default: 0,
+    min: [0, 'Weekly points cannot be negative']
+  },
+  notification_preferences: {
+    masterPush: { type: Boolean, default: true },
+    flood: { type: Boolean, default: true },
+    sos: { type: Boolean, default: true },
+    community: { type: Boolean, default: true },
+    pushChannel: { type: Boolean, default: true },
+    emailChannel: { type: Boolean, default: false }
+  },
+  last_login_ip: { type: String }
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 
 // NOTE: Do not automatically delete pending users when OTP expires.

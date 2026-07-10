@@ -7,7 +7,8 @@ class ConfigController {
         water_level_l1,
         water_level_l2,
         water_level_l3,
-        water_level_l4
+        water_level_l4,
+        water_rising_speed_threshold
       } = req.body;
 
       // Validation check: levels must be in ascending order
@@ -30,6 +31,7 @@ class ConfigController {
       if (water_level_l2 !== undefined) config.water_level_l2 = water_level_l2;
       if (water_level_l3 !== undefined) config.water_level_l3 = water_level_l3;
       if (water_level_l4 !== undefined) config.water_level_l4 = water_level_l4;
+      if (water_rising_speed_threshold !== undefined) config.water_rising_speed_threshold = water_rising_speed_threshold;
 
       await config.save();
 

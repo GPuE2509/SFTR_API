@@ -17,6 +17,9 @@ exports.getWorkshopProfile = async (req, res) => {
 exports.updateWorkshopProfile = async (req, res) => {
   try {
     const workshop = await workshopService.updateWorkshop(req.user._id, req.body);
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
     return res.status(200).json({
       message: 'Workshop information updated successfully.',
       workshop
@@ -33,6 +36,72 @@ exports.updateWorkshopProfile = async (req, res) => {
   }
 };
 
+// Add new service to workshop
+exports.addService = async (req, res) => {
+  try {
+    const workshop = await workshopService.addService(req.user._id, req.body);
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
+    return res.status(200).json({
+      message: 'Service added successfully.',
+      workshop
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ message: messages.join(', ') });
+    }
+    return res.status(500).json({ message: 'Server error while adding service.' });
+  }
+};
+
+// Update an existing service in workshop
+exports.updateService = async (req, res) => {
+  try {
+    const workshop = await workshopService.updateService(req.user._id, req.params.serviceId, req.body);
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
+    return res.status(200).json({
+      message: 'Service updated successfully.',
+      workshop
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ message: messages.join(', ') });
+    }
+    return res.status(500).json({ message: 'Server error while updating service.' });
+  }
+};
+
+// Delete a service from workshop
+exports.deleteService = async (req, res) => {
+  try {
+    const workshop = await workshopService.deleteService(req.user._id, req.params.serviceId);
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Service deleted successfully.',
+      workshop
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    return res.status(500).json({ message: 'Server error while deleting service.' });
+  }
+};
+
 exports.uploadCoverPhoto = async (req, res) => {
   try {
     if (!req.file) {
@@ -40,6 +109,9 @@ exports.uploadCoverPhoto = async (req, res) => {
     }
 
     const cover_url = await workshopService.updateCoverPhoto(req.user._id, req.file.buffer);
+
+    const wsHelper = require('../../utils/wsHelper');
+    wsHelper.broadcast({ type: 'MAP_UPDATE' });
 
     return res.status(200).json({
       message: 'Workshop cover image updated successfully.',

@@ -13,6 +13,15 @@ router.get('/devices', IotController.getAllDevices);
 // Route: POST /api/iot/devices
 router.post('/devices', uploadSingleImage, IotController.addDevice);
 
+// Route: GET /api/iot/devices/:id/history
+router.get('/devices/:id/history', IotController.getDeviceHistory);
+
+// Route: GET /api/iot/devices/:id/speed-analysis
+router.get('/devices/:id/speed-analysis', IotController.getDeviceSpeedAnalysis);
+
+// Route: GET /api/iot/devices/:id/logs
+router.get('/devices/:id/logs', IotController.getDeviceLogs);
+
 // Route: GET /api/iot/devices/:id
 router.get('/devices/:id', IotController.getDeviceDetails);
 

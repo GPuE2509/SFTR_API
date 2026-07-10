@@ -27,12 +27,20 @@ exports.getUserProfile = async (userOrId) => {
   // Run independent queries in parallel
   const [pendingVolunteer, staffLinks] = await Promise.all([
     Volunteer.findOne({ user_id: userId, status: 'Pending_Approval' }),
-    WorkshopStaff.find({ user_id: userId, is_owner: true })
+    WorkshopStaff.find({ user_id: userId })
   ]);
 
   let pendingWorkshop = null;
-  if (staffLinks.length > 0) {
-    const workshopIds = staffLinks.map(link => link.workshop_id);
+  let activeWorkshopName = null;
+  const ownerLinks = staffLinks.filter(link => link.is_owner === true);
+  const activeStaffLink = staffLinks.find(link => link.status === 'Available');
+
+  if (activeStaffLink) {
+    activeWorkshopName = activeStaffLink.workshop_name;
+  }
+
+  if (ownerLinks.length > 0) {
+    const workshopIds = ownerLinks.map(link => link.workshop_id);
     const ws = await Workshop.findOne({
       _id: { $in: workshopIds },
       status: 'Pending_Approval'
@@ -51,7 +59,8 @@ exports.getUserProfile = async (userOrId) => {
       requestedRole: 'volunteer',
       vehicleType: pendingVolunteer.vehicle_type
     } : null,
-    pendingWorkshop
+    pendingWorkshop,
+    activeWorkshopName
   };
 };
 
